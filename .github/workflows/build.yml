@@ -1,0 +1,135 @@
+name: Build dipper kernel with latest official KernelSU
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_ref:
+        description: "Kernel source branch (mansiaer/NGK_android_kernel_xiaomi_sdm845)"
+        default: "susfs"
+        required: false
+      ksu_ref:
+        description: "KernelSU version (tiann/KernelSU tag or main)"
+        default: "main"
+        required: false
+      create_release:
+        description: "Create release after build"
+        default: "true"
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  KERNEL_REPO: mansiaer/NGK_android_kernel_xiaomi_sdm845
+  CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/42d2c090c14c9c7f4dfd365ae551e2b959dc775c/clang-r584948b.tar.gz
+  DEFCONFIG: nh-dipper_defconfig
+
+jobs:
+  build:
+    name: Build dipper + KernelSU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+
+      - name: Checkout kernel source
+        run: |
+          git clone --depth=1 --branch "${{ github.event.inputs.kernel_ref }}" \
+            "https://github.com/${KERNEL_REPO}.git" kernel
+          cd kernel
+          echo "kernel HEAD = $(git rev-parse HEAD)"
+          grep -E "CONFIG_KSU|SUSFS" arch/arm64/configs/${DEFCONFIG} || true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex libssl-dev python3 lld zip \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: Cache clang toolchain
+        id: clang
+        uses: actions/cache@v4
+        with:
+          path: clang
+          key: aosp-clang-r584948b
+
+      - name: Download clang
+        if: steps.clang.outputs.cache-hit != 'true'
+        run: |
+          mkdir clang
+          curl -L --fail --retry 3 "${CLANG_URL}" -o clang.tar.gz
+          tar -xf clang.tar.gz -C clang
+          rm clang.tar.gz
+          ./clang/bin/clang --version
+
+      - name: Integrate latest official KernelSU (tiann/KernelSU)
+        run: |
+          cd kernel
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" \
+            | bash -s "${{ github.event.inputs.ksu_ref }}"
+          echo "--- KernelSU integrated ---"
+          ls -d KernelSU
+          git -C KernelSU log --oneline -1 || true
+
+      - name: Make defconfig
+        run: |
+          cd kernel
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 ${DEFCONFIG}
+          grep -E "CONFIG_KSU=|CONFIG_KSU_SUSFS=|CONFIG_LOCALVERSION" out/.config || true
+
+      - name: Build Image.gz-dtb
+        run: |
+          cd kernel
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export KBUILD_BUILD_USER=dipper
+          export KBUILD_BUILD_HOST=kernelsu-build
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC=clang LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip \
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+            Image.gz-dtb
+          ls -la out/arch/arm64/boot/
+
+      - name: Fallback: append dtb manually if needed
+        if: hashFiles('kernel/out/arch/arm64/boot/Image.gz-dtb') == ''
+        run: |
+          cd kernel/out/arch/arm64/boot
+          DTB=$(find . -name "*.dtb" | grep -i -m1 "dipper" || find . -name "*.dtb" | grep -i -m1 "sdm845" || find . -name "*.dtb" | head -1)
+          echo "Using DTB: $DTB"
+          cat Image.gz "$DTB" > Image.gz-dtb
+
+      - name: Package AnyKernel3 zip
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+          rm -rf ak3/.git ak3/.github ak3/README.md ak3/anykernel.sh.patch
+          cp anykernel.sh ak3/anykernel.sh
+          cp kernel/out/arch/arm64/boot/Image.gz-dtb ak3/Image.gz-dtb
+          cd ak3
+          zip -r9 "../NGK_dipper_KernelSU_${{ github.run_number }}_$(date +%Y%m%d).zip" *
+          cd ..
+          ls -la *.zip
+          unzip -l *.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NGK_dipper_KernelSU_${{ github.run_number }}
+          path: NGK_dipper_KernelSU_*.zip
+          if-no-files-found: error
+
+      - name: Create Release
+        if: github.event.inputs.create_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ZIP=$(ls NGK_dipper_KernelSU_*.zip | head -1)
+          gh release create "dipper-ksu-${{ github.run_number }}" \
+            --title "NGK dipper + KernelSU #${{ github.run_number }}" \
+            --notes "Base: NGK dipper (mansiaer fork, susfs branch) / KernelSU: tiann/KernelSU ${{ github.event.inputs.ksu_ref }} manual hooks / SUSFS built-in (CONFIG_KSU_SUSFS=y)" \
+            "$ZIP"
