@@ -1,4 +1,4 @@
-name: Build dipper kernel with latest official KernelSU
+name: Build dipper kernel with official KernelSU (4.9 compatible)
 
 on:
   workflow_dispatch:
@@ -8,8 +8,8 @@ on:
         default: "susfs"
         required: false
       ksu_ref:
-        description: "KernelSU version (tiann/KernelSU tag or main)"
-        default: "main"
+        description: "KernelSU tag (old-arch only: v3.0.0/v2.0.0/v1.0.0; main is new-arch and CANNOT build on 4.9)"
+        default: "v3.0.0"
         required: false
       create_release:
         description: "Create release after build"
@@ -47,8 +47,14 @@ jobs:
       - name: Patch defconfig (enable KPROBES, required by KSU)
         run: |
           cd kernel
-          grep -q "^CONFIG_KPROBES=y" arch/arm64/configs/${DEFCONFIG} || \
-            printf "\nCONFIG_KPROBES=y\nCONFIG_KSU=y\nCONFIG_LOCALVERSION=\"-NGK-KSU\"\n" >> arch/arm64/configs/${DEFCONFIG}
+          {
+            echo ""
+            echo "CONFIG_KPROBES=y"
+            echo "CONFIG_HAVE_KPROBES=y"
+            echo "CONFIG_KPROBE_EVENTS=y"
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_LOCALVERSION=\"-NGK-KSU\""
+          } >> arch/arm64/configs/${DEFCONFIG}
           echo "=== defconfig after patch ==="
           grep -E "CONFIG_KPROBES=|CONFIG_KSU=|CONFIG_LOCALVERSION=" arch/arm64/configs/${DEFCONFIG}
 
@@ -75,15 +81,16 @@ jobs:
           rm clang.tar.gz
           ./clang/bin/clang --version
 
-      - name: Integrate latest official KernelSU (tiann/KernelSU)
+      - name: Integrate official KernelSU (old-arch tag, 4.9 compatible)
         run: |
           cd kernel
+          KSU_REF="${{ github.event.inputs.ksu_ref }}"
           curl -LSs --fail --retry 3 \
-            "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" \
+            "https://raw.githubusercontent.com/tiann/KernelSU/${KSU_REF}/kernel/setup.sh" \
             -o setup_ksu.sh
-          sh setup_ksu.sh "${{ github.event.inputs.ksu_ref }}"
+          sh setup_ksu.sh "${KSU_REF}"
           echo "=== verify integration ==="
-          test -f KernelSU/kernel/Kbuild || { echo "::error::KernelSU source not present (KernelSU/kernel/Kbuild missing)"; exit 1; }
+          test -f KernelSU/kernel/Makefile || test -f KernelSU/kernel/Kbuild || { echo "::error::KernelSU source not present"; exit 1; }
           grep -q "kernelsu" drivers/Makefile || { echo "::error::drivers/Makefile not patched by setup.sh"; exit 1; }
           grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || {
             echo "Kconfig entry missing, adding it manually"
@@ -138,6 +145,10 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           rm -rf ak3/.git ak3/.github ak3/README.md ak3/anykernel.sh.patch
           cp anykernel.sh ak3/anykernel.sh
+          # 适配老 MIUI (A10 底包): 取消 Android 版本门槛
+          sed -i 's/^supported.versions=.*/supported.versions=/' ak3/anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=NGK dipper + official KernelSU (MIUI any)/' ak3/anykernel.sh
+          grep -E "kernel.string|supported.versions|device.name" ak3/anykernel.sh
           cp kernel/out/arch/arm64/boot/Image.gz-dtb ak3/Image.gz-dtb
           cd ak3
           zip -r9 "../NGK_dipper_KernelSU_${{ github.run_number }}_$(date +%Y%m%d).zip" *
@@ -160,5 +171,5 @@ jobs:
           ZIP=$(ls NGK_dipper_KernelSU_*.zip | head -1)
           gh release create "dipper-ksu-${{ github.run_number }}" \
             --title "NGK dipper + KernelSU #${{ github.run_number }}" \
-            --notes "Base: NGK dipper (mansiaer fork, ${{ github.event.inputs.kernel_ref }} branch) / KernelSU: tiann/KernelSU ${{ github.event.inputs.ksu_ref }} / SUSFS disabled (official KSU has no susfs support)" \
+            --notes "Base: NGK dipper (mansiaer fork, ${{ github.event.inputs.kernel_ref }} branch) / KernelSU: tiann/KernelSU ${{ github.event.inputs.ksu_ref }} (old-arch, kprobes) / SUSFS disabled / supported.versions check disabled (any MIUI). Manager: use a KernelSU manager matching the kernel version, e.g. official releases on tiann/KernelSU." \
             "$ZIP"
