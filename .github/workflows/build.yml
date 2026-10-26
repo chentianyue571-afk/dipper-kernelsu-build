@@ -46,15 +46,17 @@ jobs:
             echo "KERNEL_BRANCH=${{ github.event.inputs.kernel_ref }}" >> $GITHUB_ENV
             echo "DEFCONFIG=dipper_user_defconfig" >> $GITHUB_ENV
             echo "LOCALVERSION=-MiCode-KSU" >> $GITHUB_ENV
-            echo "KERNEL_STRING=MiCode dipper A10 official source + official KernelSU (MIUI A10)"
             echo "KERNEL_STRING=MiCode dipper A10 official source + official KernelSU (MIUI A10)" >> $GITHUB_ENV
+            # vanilla 4.9 kbuild: stack-protector prepare check misfires with
+            # modern clang; integrated assembler breaks on old qcom asm.
+            echo "IAS_FLAG=" >> $GITHUB_ENV
           else
             echo "KERNEL_REPO=mansiaer/NGK_android_kernel_xiaomi_sdm845" >> $GITHUB_ENV
             echo "KERNEL_BRANCH=${{ github.event.inputs.kernel_ref }}" >> $GITHUB_ENV
             echo "DEFCONFIG=nh-dipper_defconfig" >> $GITHUB_ENV
             echo "LOCALVERSION=-NGK-KSU" >> $GITHUB_ENV
-            echo "KERNEL_STRING=NGK dipper + official KernelSU (MIUI any)"
             echo "KERNEL_STRING=NGK dipper + official KernelSU (MIUI any)" >> $GITHUB_ENV
+            echo "IAS_FLAG=LLVM_IAS=1" >> $GITHUB_ENV
           fi
           echo "Resolved: KERNEL_REPO=$KERNEL_REPO BRANCH=$KERNEL_BRANCH DEFCONFIG=$DEFCONFIG"
 
@@ -78,6 +80,11 @@ jobs:
             echo "CONFIG_KSU=y"
             echo "CONFIG_LOCALVERSION=\"${LOCALVERSION}\""
           } >> arch/arm64/configs/${DEFCONFIG}
+          if [ "${{ github.event.inputs.kernel_source }}" = "micode" ]; then
+            # prepare-compiler-check only fires when SSP =y; disable to skip it
+            echo "# CONFIG_CC_STACKPROTECTOR is not set" >> arch/arm64/configs/${DEFCONFIG}
+            echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set" >> arch/arm64/configs/${DEFCONFIG}
+          fi
           echo "=== defconfig after patch ==="
           grep -E "CONFIG_KPROBES=|CONFIG_KSU=|CONFIG_LOCALVERSION=" arch/arm64/configs/${DEFCONFIG}
 
@@ -546,7 +553,7 @@ jobs:
           export KBUILD_BUILD_USER=dipper
           export KBUILD_BUILD_HOST=kernelsu-build
           make -j$(nproc) O=out ARCH=arm64 \
-            CC=clang LLVM=1 LLVM_IAS=1 \
+            CC=clang LLVM=1 ${IAS_FLAG} \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip \
