@@ -267,7 +267,6 @@ jobs:
           if changed:
               open(p, "w").write(s)
               print("supercalls.c: fd-wrapper API guarded for kernels < 5.11")
-
           # 4j. selinux/: v3.0.0 selinux subdir uses 5.6+ blob APIs
           #     (selinux_state/selinux_cred). Replace it wholesale with the
           #     official v0.9.5 implementation which is natively compatible
@@ -363,6 +362,24 @@ jobs:
           s = s + addition
           open(p, "w").write(s)
           print("selinux/selinux.c: v3.0.0 entry points appended (4.9-safe style)")
+
+          # 4j2. is_zygote signature: v0.9.5 declares "void *", but v3.0.0
+          #      callers pass "const struct cred *" (-Werror rejects
+          #      discarding qualifiers). Constify both decl and def.
+          p = sel_dir + "/selinux.h"
+          s = open(p).read()
+          if "bool is_zygote(void *cred);" in s:
+              s = s.replace("bool is_zygote(void *cred);",
+                            "bool is_zygote(const void *cred);")
+              open(p, "w").write(s)
+              print("selinux/selinux.h: is_zygote constified")
+          p = sel_dir + "/selinux.c"
+          s = open(p).read()
+          if "bool is_zygote(void *sec)" in s:
+              s = s.replace("bool is_zygote(void *sec)",
+                            "bool is_zygote(const void *sec)")
+              open(p, "w").write(s)
+              print("selinux/selinux.c: is_zygote constified")
 
           p = "drivers/kernelsu/seccomp_cache.c"
           s = open(p).read()
