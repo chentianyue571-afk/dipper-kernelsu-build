@@ -286,7 +286,6 @@ jobs:
           hdecl = """
           bool is_task_ksu_domain(const struct cred* cred);
           bool is_init(const struct cred* cred);
-
           u32 ksu_get_ksu_file_sid();
 
           int handle_sepolicy(unsigned long arg3, void __user *arg4);
@@ -412,6 +411,43 @@ jobs:
           if s2 != s:
               open(p, "w").write(s2)
               print("seccomp_cache.c: sched/task.h guarded for old kernels")
+
+          # 4k. manual hooks: this kernel tree pre-integrates CONFIG_KSU call
+          #     sites (fs/exec.c, fs/read_write.c, kernel/reboot.c) expecting
+          #     global ksu_handle_execveat / ksu_handle_sys_read /
+          #     ksu_handle_sys_reboot. v3.0.0 old-arch implements the same
+          #     logic via kprobes, so add thin wrappers in ksud.c:
+          #     - execveat: forward to ksu_handle_execveat_ksud (void* argv /
+          #       envp are really struct user_arg_ptr*, already defined above
+          #       in ksud.c with the same layout as fs/exec.c)
+          #     - sys_read: de-static the existing identical implementation
+          #     - sys_reboot: no-op (v3.0.0 has no reboot hook; kernel patch
+          #       ignores the return value)
+          p = "drivers/kernelsu/ksud.c"
+          s = open(p).read()
+          if "static int ksu_handle_sys_read(" in s:
+              s = s.replace("static int ksu_handle_sys_read(",
+                            "int ksu_handle_sys_read(")
+          if "int ksu_handle_execveat(int *fd" not in s:
+              wrapper = (
+                  "int ksu_handle_execveat(int *fd, struct filename **filename_ptr,\n"
+                  "                        void *argv, void *envp, int *flags)\n"
+                  "{\n"
+                  "    (void)flags;\n"
+                  "    return ksu_handle_execveat_ksud(fd, filename_ptr,\n"
+                  "                                    (struct user_arg_ptr *)argv,\n"
+                  "                                    (struct user_arg_ptr *)envp, flags);\n"
+                  "}\n"
+                  "\n"
+                  "int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,\n"
+                  "                          void __user **arg)\n"
+                  "{\n"
+                  "    (void)magic1; (void)magic2; (void)cmd; (void)arg;\n"
+                  "    return 0;\n"
+                  "}\n")
+              s = s + wrapper
+          open(p, "w").write(s)
+          print("ksud.c: manual hook wrappers added (execveat fwd, sys_read de-static, reboot noop)")
 
           # 4h. setuid_hook.c: force_sig takes (sig, task) two args before 5.2
           p = "drivers/kernelsu/setuid_hook.c"
