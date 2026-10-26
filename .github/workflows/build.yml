@@ -98,6 +98,24 @@ jobs:
           }
           grep -n "kernelsu" drivers/Makefile drivers/Kconfig
           git -C KernelSU log --oneline -1 || true
+          # 4.9 kernel has no MODULE_IMPORT_NS macro (introduced in 5.4); guard it
+          python3 - <<'EOF'
+          import re
+          p = "drivers/kernelsu/ksu.c"
+          s = open(p).read()
+          s2 = re.sub(r'#else\s*\n(MODULE_IMPORT_NS\(VFS_internal)',
+                      '#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)\n\\1', s)
+          if s2 == s:
+              s2 = re.sub(r'(?m)^(MODULE_IMPORT_NS\(VFS_internal[^;]*;)\s*$',
+                          '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)\n\\1\n#endif', s)
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("patched ksu.c: MODULE_IMPORT_NS guarded for kernels < 5.4")
+          else:
+              print("no bare MODULE_IMPORT_NS found, skip patch")
+          EOF
+          echo "=== ksu.c tail after patch ==="
+          tail -12 drivers/kernelsu/ksu.c
 
       - name: Make defconfig
         run: |
