@@ -159,6 +159,15 @@ jobs:
               open(p, "w").write(s2)
               print("app_profile.c: sched/signal.h guarded for old kernels")
 
+          # 4c. app_profile.c: struct seccomp.filter_count only exists on 5.9+
+          p = "drivers/kernelsu/app_profile.c"
+          s = open(p).read()
+          s2 = s.replace("\tatomic_set(&current->seccomp.filter_count, 0);\n",
+                         "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)\n\tatomic_set(&current->seccomp.filter_count, 0);\n#endif\n")
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("app_profile.c: filter_count guarded for kernels < 5.9")
+
           p = "drivers/kernelsu/seccomp_cache.c"
           s = open(p).read()
           s2 = s.replace("#include <linux/sched/task.h>",
