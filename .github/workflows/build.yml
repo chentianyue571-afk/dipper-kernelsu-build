@@ -268,6 +268,102 @@ jobs:
               open(p, "w").write(s)
               print("supercalls.c: fd-wrapper API guarded for kernels < 5.11")
 
+          # 4j. selinux/: v3.0.0 selinux subdir uses 5.6+ blob APIs
+          #     (selinux_state/selinux_cred). Replace it wholesale with the
+          #     official v0.9.5 implementation which is natively compatible
+          #     down to 4.9, then append the 3 v3.0.0-only entry points
+          #     written in a 4.9-safe style (cred->security direct access).
+          import urllib.request
+          sel_dir = "drivers/kernelsu/selinux"
+          for f in ["selinux.c", "selinux.h", "rules.c", "sepolicy.c", "sepolicy.h"]:
+              urllib.request.urlretrieve(
+                  "https://raw.githubusercontent.com/tiann/KernelSU/v0.9.5/kernel/selinux/" + f,
+                  sel_dir + "/" + f)
+              print("selinux/" + f + ": replaced with v0.9.5")
+
+          p = sel_dir + "/selinux.h"
+          s = open(p).read()
+          s = s.replace('#include "linux/version.h"',
+                        '#include "linux/version.h"\n#include "linux/cred.h"')
+          hdecl = """
+          bool is_task_ksu_domain(const struct cred* cred);
+
+          bool is_init(const struct cred* cred);
+
+          u32 ksu_get_ksu_file_sid();
+
+          """
+          idx = s.rstrip().rfind("#endif")
+          s = s[:idx] + hdecl + s[idx:]
+          open(p, "w").write(s)
+          print("selinux/selinux.h: v3.0.0 entry point declarations added")
+
+          p = sel_dir + "/selinux.c"
+          s = open(p).read()
+          s = s.replace('#include "objsec.h"',
+                        '#include "objsec.h"\n#include <linux/security.h>')
+          addition = """
+          bool is_task_ksu_domain(const struct cred* cred)
+          {
+              char *domain;
+              u32 seclen;
+              bool result;
+              const struct task_security_struct *tsec;
+              int err;
+              if (!cred) {
+                  return false;
+              }
+              tsec = (const struct task_security_struct *)cred->security;
+              if (!tsec) {
+                  return false;
+              }
+              err = security_secid_to_secctx(tsec->sid, &domain, &seclen);
+              if (err) {
+                  return false;
+              }
+              result = strncmp(KERNEL_SU_DOMAIN, domain, seclen) == 0;
+              security_release_secctx(domain, seclen);
+              return result;
+          }
+
+          bool is_init(const struct cred* cred)
+          {
+              char *domain;
+              u32 seclen;
+              bool result;
+              const struct task_security_struct *tsec;
+              int err;
+              if (!cred) {
+                  return false;
+              }
+              tsec = (const struct task_security_struct *)cred->security;
+              if (!tsec) {
+                  return false;
+              }
+              err = security_secid_to_secctx(tsec->sid, &domain, &seclen);
+              if (err) {
+                  return false;
+              }
+              result = strncmp("u:r:init:s0", domain, seclen) == 0;
+              security_release_secctx(domain, seclen);
+              return result;
+          }
+
+          u32 ksu_get_ksu_file_sid()
+          {
+              u32 ksu_file_sid = 0;
+              int err = security_secctx_to_secid("u:object_r:ksu_file:s0",
+                                 strlen("u:object_r:ksu_file:s0"), &ksu_file_sid);
+              if (err) {
+                  pr_info("get ksufile sid err %d\\n", err);
+              }
+              return ksu_file_sid;
+          }
+          """
+          s = s + addition
+          open(p, "w").write(s)
+          print("selinux/selinux.c: v3.0.0 entry points appended (4.9-safe style)")
+
           p = "drivers/kernelsu/seccomp_cache.c"
           s = open(p).read()
           s2 = s.replace("#include <linux/sched/task.h>",
