@@ -98,9 +98,19 @@ jobs:
           }
           grep -n "kernelsu" drivers/Makefile drivers/Kconfig
           git -C KernelSU log --oneline -1 || true
-          # 4.9 kernel has no MODULE_IMPORT_NS macro (introduced in 5.4); guard it
+          # ---- 4.9 compat patch set for KernelSU v3.0.0 (old-arch) ----
           python3 - <<'EOF'
           import re
+
+          # 1. allowlist.c: linux/compiler_types.h only exists on 5.x+
+          p = "drivers/kernelsu/allowlist.c"
+          s = open(p).read()
+          s2 = s.replace("#include <linux/compiler_types.h>\n", "")
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("allowlist.c: removed compiler_types.h include")
+
+          # 2. ksu.c: MODULE_IMPORT_NS macro needs 5.4+
           p = "drivers/kernelsu/ksu.c"
           s = open(p).read()
           s2 = re.sub(r'#else\s*\n(MODULE_IMPORT_NS\(VFS_internal)',
@@ -110,12 +120,62 @@ jobs:
                           '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)\n\\1\n#endif', s)
           if s2 != s:
               open(p, "w").write(s2)
-              print("patched ksu.c: MODULE_IMPORT_NS guarded for kernels < 5.4")
-          else:
-              print("no bare MODULE_IMPORT_NS found, skip patch")
+              print("ksu.c: guarded MODULE_IMPORT_NS")
+
+          # 3. util.c: pgtable.h (5.9+) / p4d (4.12+) / mmap_lock API (5.8+) guards
+          p = "drivers/kernelsu/util.c"
+          s = open(p).read()
+          s2 = s.replace("#include <linux/pgtable.h>",
+                         "#if __has_include(<linux/pgtable.h>)\n#include <linux/pgtable.h>\n#endif")
+          s2 = s2.replace("\tp4d_t *p4d;\n",
+                          "#if __has_include(<asm-generic/pgtable-nop4d.h>)\n\tp4d_t *p4d;\n#endif\n")
+          s2 = s2.replace(
+              "\tp4d = p4d_offset(pgd, addr);\n\tif (!p4d_present(*p4d))\n\t\tgoto out_unlock;\n\n\tpud = pud_offset(p4d, addr);\n",
+              "#if __has_include(<asm-generic/pgtable-nop4d.h>)\n\tp4d = p4d_offset(pgd, addr);\n\tif (!p4d_present(*p4d))\n\t\tgoto out_unlock;\n\n\tpud = pud_offset(p4d, addr);\n#else\n\tpud = pud_offset(pgd, addr);\n#endif\n")
+          s2 = s2.replace("\tif (!mmap_read_trylock(mm))\n\t\treturn false;\n",
+                          "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)\n\tif (!mmap_read_trylock(mm))\n\t\treturn false;\n#else\n\tif (!down_read_trylock(&mm->mmap_sem))\n\t\treturn false;\n#endif\n")
+          s2 = s2.replace("\tmmap_read_unlock(mm);\n",
+                          "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)\n\tmmap_read_unlock(mm);\n#else\n\tup_read(&mm->mmap_sem);\n#endif\n")
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("util.c: patched for old kernels")
+
+          # 4. pkg_observer.c: fsnotify .handle_inode_event needs 5.9+
+          p = "drivers/kernelsu/pkg_observer.c"
+          s = open(p).read()
+          stub = ("#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\n"
+                  "int ksu_observer_init(void) { return 0; }\n"
+                  "void ksu_observer_exit(void) { }\n"
+                  "#else\n")
+          open(p, "w").write(stub + s + "\n#endif\n")
+          print("pkg_observer.c: stubbed for kernels < 5.9")
+
+          # 5. kernel_read compat: 4.9 API is (file, offset, buf, count)
+          compat = "#ifndef __KSU_COMPAT_49_H\n#define __KSU_COMPAT_49_H\n"
+          compat += "#include <linux/version.h>\n#include <linux/fs.h>\n"
+          compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)\n"
+          compat += "static inline int ksu_kernel_read49(struct file *f, void *buf, size_t count, loff_t *pos)\n{\n"
+          compat += "    int r = kernel_read(f, *pos, (char *)buf, count);\n    if (r > 0)\n        *pos += r;\n    return r;\n}\n"
+          compat += "#endif\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)\n"
+          compat += "#define TWA_RESUME true\n#endif\n#endif\n"
+          open("drivers/kernelsu/ksu_compat_49.h", "w").write(compat)
+          for fn in ["drivers/kernelsu/apk_sign.c", "drivers/kernelsu/throne_tracker.c"]:
+              s = open(fn).read()
+              if "ksu_compat_49.h" not in s:
+                  s = '#include "ksu_compat_49.h"\n' + s
+              s = s.replace("kernel_read(fp", "ksu_kernel_read49(fp")
+              open(fn, "w").write(s)
+          print("kernel_read compat applied to apk_sign.c and throne_tracker.c")
+
+          # 6. global -include for TWA_RESUME define
+          mf = "KernelSU/kernel/Makefile"
+          s = open(mf).read()
+          if "ksu_compat_49.h" not in s:
+              open(mf, "w").write(s + "\nccflags-y += -include $(src)/ksu_compat_49.h\n")
+              print("Makefile: -include ksu_compat_49.h added")
           EOF
-          echo "=== ksu.c tail after patch ==="
-          tail -12 drivers/kernelsu/ksu.c
+          echo "=== patched files summary ==="
+          grep -l "ksu_compat_49" drivers/kernelsu/*.c drivers/kernelsu/*.h 2>/dev/null || true
 
       - name: Make defconfig
         run: |
