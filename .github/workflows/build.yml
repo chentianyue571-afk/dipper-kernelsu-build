@@ -279,7 +279,6 @@ jobs:
                   "https://raw.githubusercontent.com/tiann/KernelSU/v0.9.5/kernel/selinux/" + f,
                   sel_dir + "/" + f)
               print("selinux/" + f + ": replaced with v0.9.5")
-
           p = sel_dir + "/selinux.h"
           s = open(p).read()
           s = s.replace('#include "linux/version.h"',
@@ -291,11 +290,24 @@ jobs:
 
           u32 ksu_get_ksu_file_sid();
 
+          int handle_sepolicy(unsigned long arg3, void __user *arg4);
+
           """
           idx = s.rstrip().rfind("#endif")
           s = s[:idx] + hdecl + s[idx:]
           open(p, "w").write(s)
           print("selinux/selinux.h: v3.0.0 entry point declarations added")
+
+          # 4j3. v0.9.5 sepolicy.c includes ../kernel_compat.h which only
+          #      exists in the v0.9.5 tree; v3.0.0 tree has no such file and
+          #      its symbols are unused on 4.9 -> guard with __has_include.
+          p = sel_dir + "/sepolicy.c"
+          s = open(p).read()
+          if '#include "../kernel_compat.h"' in s:
+              s = s.replace('#include "../kernel_compat.h"',
+                            '#if __has_include("../kernel_compat.h")\n#include "../kernel_compat.h"\n#endif')
+              open(p, "w").write(s)
+              print("selinux/sepolicy.c: kernel_compat.h include guarded")
 
           p = sel_dir + "/selinux.c"
           s = open(p).read()
