@@ -150,29 +150,25 @@ jobs:
           open(p, "w").write(stub + s + "\n#endif\n")
           print("pkg_observer.c: stubbed for kernels < 5.9")
 
-          # 5. kernel_read compat: 4.9 API is (file, offset, buf, count)
+          # 5. kernel_read/kernel_write compat: 4.9 API is (file, offset, buf, count)
           compat = "#ifndef __KSU_COMPAT_49_H\n#define __KSU_COMPAT_49_H\n"
           compat += "#include <linux/version.h>\n#include <linux/fs.h>\n"
           compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)\n"
           compat += "static inline int ksu_kernel_read49(struct file *f, void *buf, size_t count, loff_t *pos)\n{\n"
           compat += "    int r = kernel_read(f, *pos, (char *)buf, count);\n    if (r > 0)\n        *pos += r;\n    return r;\n}\n"
+          compat += "static inline ssize_t ksu_kernel_write49(struct file *f, const void *buf, size_t count, loff_t *pos)\n{\n"
+          compat += "    ssize_t r = kernel_write(f, (const char *)buf, count, *pos);\n    if (r > 0)\n        *pos += r;\n    return r;\n}\n"
           compat += "#endif\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)\n"
           compat += "#define TWA_RESUME true\n#endif\n#endif\n"
           open("drivers/kernelsu/ksu_compat_49.h", "w").write(compat)
-          for fn in ["drivers/kernelsu/apk_sign.c", "drivers/kernelsu/throne_tracker.c"]:
+          for fn in ["drivers/kernelsu/apk_sign.c", "drivers/kernelsu/throne_tracker.c", "drivers/kernelsu/allowlist.c"]:
               s = open(fn).read()
               if "ksu_compat_49.h" not in s:
                   s = '#include "ksu_compat_49.h"\n' + s
               s = s.replace("kernel_read(fp", "ksu_kernel_read49(fp")
+              s = s.replace("kernel_write(fp", "ksu_kernel_write49(fp")
               open(fn, "w").write(s)
-          print("kernel_read compat applied to apk_sign.c and throne_tracker.c")
-
-          # 6. global -include for TWA_RESUME define
-          mf = "KernelSU/kernel/Makefile"
-          s = open(mf).read()
-          if "ksu_compat_49.h" not in s:
-              open(mf, "w").write(s + "\nccflags-y += -include $(src)/ksu_compat_49.h\n")
-              print("Makefile: -include ksu_compat_49.h added")
+          print("kernel_read/write compat applied to apk_sign.c, throne_tracker.c, allowlist.c")
           EOF
           echo "=== patched files summary ==="
           grep -l "ksu_compat_49" drivers/kernelsu/*.c drivers/kernelsu/*.h 2>/dev/null || true
