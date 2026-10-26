@@ -177,6 +177,16 @@ jobs:
               open(p, "w").write(s2)
               print("sucompat.c: pgtable.h guarded for old kernels")
 
+          # 4d2. linux/sched/task_stack.h missing from this 4.9 vendor tree entirely
+          import glob as _glob
+          for fn in _glob.glob("drivers/kernelsu/*.c"):
+              s = open(fn).read()
+              s2 = s.replace("#include <linux/sched/task_stack.h>",
+                             "#if __has_include(<linux/sched/task_stack.h>)\n#include <linux/sched/task_stack.h>\n#endif")
+              if s2 != s:
+                  open(fn, "w").write(s2)
+                  print(fn + ": sched/task_stack.h guarded")
+
           # 4e. file_wrapper.c: f_op->iopoll only exists on 5.1+
           p = "drivers/kernelsu/file_wrapper.c"
           s = open(p).read()
