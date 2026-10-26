@@ -102,13 +102,13 @@ jobs:
           python3 - <<'EOF'
           import re
 
-          # 1. allowlist.c: linux/compiler_types.h only exists on 5.x+
-          p = "drivers/kernelsu/allowlist.c"
-          s = open(p).read()
-          s2 = s.replace("#include <linux/compiler_types.h>\n", "")
-          if s2 != s:
-              open(p, "w").write(s2)
-              print("allowlist.c: removed compiler_types.h include")
+          # 1. allowlist.c/sucompat.c: linux/compiler_types.h only exists on 5.3+
+          for fn in ["drivers/kernelsu/allowlist.c", "drivers/kernelsu/sucompat.c"]:
+              s = open(fn).read()
+              s2 = s.replace("#include <linux/compiler_types.h>\n", "")
+              if s2 != s:
+                  open(fn, "w").write(s2)
+                  print(fn + ": removed compiler_types.h include")
 
           # 2. ksu.c: MODULE_IMPORT_NS macro needs 5.4+
           p = "drivers/kernelsu/ksu.c"
@@ -151,13 +151,13 @@ jobs:
           print("pkg_observer.c: stubbed for kernels < 5.9")
 
           # 4b. sched headers: linux/sched/signal.h & task.h split out in 4.11
-          p = "drivers/kernelsu/app_profile.c"
-          s = open(p).read()
-          s2 = s.replace("#include <linux/sched/signal.h>",
-                         "#if __has_include(<linux/sched/signal.h>)\n#include <linux/sched/signal.h>\n#else\n#include <linux/sched.h>\n#endif")
-          if s2 != s:
-              open(p, "w").write(s2)
-              print("app_profile.c: sched/signal.h guarded for old kernels")
+          for fn in ["drivers/kernelsu/app_profile.c", "drivers/kernelsu/setuid_hook.c"]:
+              s = open(fn).read()
+              s2 = s.replace("#include <linux/sched/signal.h>",
+                             "#if __has_include(<linux/sched/signal.h>)\n#include <linux/sched/signal.h>\n#else\n#include <linux/sched.h>\n#endif")
+              if s2 != s:
+                  open(fn, "w").write(s2)
+                  print(fn + ": sched/signal.h guarded for old kernels")
 
           # 4c. app_profile.c: struct seccomp.filter_count only exists on 5.9+
           p = "drivers/kernelsu/app_profile.c"
@@ -168,6 +168,45 @@ jobs:
               open(p, "w").write(s2)
               print("app_profile.c: filter_count guarded for kernels < 5.9")
 
+          # 4d. sucompat.c: linux/pgtable.h only exists on 5.9+
+          p = "drivers/kernelsu/sucompat.c"
+          s = open(p).read()
+          s2 = s.replace("#include <linux/pgtable.h>",
+                         "#if __has_include(<linux/pgtable.h>)\n#include <linux/pgtable.h>\n#endif")
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("sucompat.c: pgtable.h guarded for old kernels")
+
+          # 4e. file_wrapper.c: f_op->iopoll only exists on 5.1+
+          p = "drivers/kernelsu/file_wrapper.c"
+          s = open(p).read()
+          s2 = s.replace("#else\nstatic int ksu_wrapper_iopoll(struct kiocb *kiocb, bool spin) {",
+                         "#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\nstatic int ksu_wrapper_iopoll(struct kiocb *kiocb, bool spin) {")
+          s2 = s2.replace("\tp->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n",
+                          "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\n\tp->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n#endif\n")
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("file_wrapper.c: iopoll guarded for kernels < 5.1")
+
+          # 4f. seccomp_cache.c: seccomp cache机制是 5.9+ 的, refcount_t/notify 在 4.9 不存在
+          p = "drivers/kernelsu/seccomp_cache.c"
+          s = open(p).read()
+          if not s.startswith("#if LINUX_VERSION_CODE"):
+              stub = ("#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\n"
+                      "struct seccomp_filter;\n"
+                      "void ksu_seccomp_clear_cache(struct seccomp_filter *filter, int nr) { (void)filter; (void)nr; }\n"
+                      "void ksu_seccomp_allow_cache(struct seccomp_filter *filter, int nr) { (void)filter; (void)nr; }\n"
+                      "#else\n")
+              open(p, "w").write(stub + s + "\n#endif\n")
+              print("seccomp_cache.c: stubbed for kernels < 5.9")
+
+          # 4g. objsec.h: missing from the v3.0.0 tag but included by supercalls.c
+          import os
+          p = "drivers/kernelsu/objsec.h"
+          if not os.path.exists(p):
+              open(p, "w").write("#ifndef __KSU_OBJSEC_H\n#define __KSU_OBJSEC_H\n/* objsec.h is missing from the v3.0.0 tag; supercalls.c includes it. */\n#endif\n")
+              print("objsec.h: created (missing from v3.0.0 tag)")
+
           p = "drivers/kernelsu/seccomp_cache.c"
           s = open(p).read()
           s2 = s.replace("#include <linux/sched/task.h>",
@@ -176,7 +215,7 @@ jobs:
               open(p, "w").write(s2)
               print("seccomp_cache.c: sched/task.h guarded for old kernels")
 
-          # 5. kernel_read/kernel_write compat: 4.9 API is (file, offset, buf, count)
+          # 5. compat header: kernel_read/write (4.14), TWA_RESUME & strncpy_from_user_nofault (5.9), ksys_close (5.0)
           compat = "#ifndef __KSU_COMPAT_49_H\n#define __KSU_COMPAT_49_H\n"
           compat += "#include <linux/version.h>\n#include <linux/fs.h>\n"
           compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)\n"
@@ -184,17 +223,27 @@ jobs:
           compat += "    int r = kernel_read(f, *pos, (char *)buf, count);\n    if (r > 0)\n        *pos += r;\n    return r;\n}\n"
           compat += "static inline ssize_t ksu_kernel_write49(struct file *f, const void *buf, size_t count, loff_t *pos)\n{\n"
           compat += "    ssize_t r = kernel_write(f, (const char *)buf, count, *pos);\n    if (r > 0)\n        *pos += r;\n    return r;\n}\n"
-          compat += "#endif\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)\n"
-          compat += "#define TWA_RESUME true\n#endif\n#endif\n"
+          compat += "#endif\n"
+          compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\n"
+          compat += "#include <linux/uaccess.h>\n"
+          compat += "#define TWA_RESUME true\n"
+          compat += "#define strncpy_from_user_nofault(dst, src, count) strncpy_from_unsafe(dst, src, count)\n"
+          compat += "#endif\n"
+          compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)\n"
+          compat += "#include <linux/syscalls.h>\n"
+          compat += "#define ksys_close(fd) sys_close(fd)\n"
+          compat += "#endif\n#endif\n"
           open("drivers/kernelsu/ksu_compat_49.h", "w").write(compat)
-          for fn in ["drivers/kernelsu/apk_sign.c", "drivers/kernelsu/throne_tracker.c", "drivers/kernelsu/allowlist.c"]:
+          import glob
+          for fn in glob.glob("drivers/kernelsu/*.c"):
               s = open(fn).read()
               if "ksu_compat_49.h" not in s:
                   s = '#include "ksu_compat_49.h"\n' + s
-              s = s.replace("kernel_read(fp", "ksu_kernel_read49(fp")
-              s = s.replace("kernel_write(fp", "ksu_kernel_write49(fp")
+              if os.path.basename(fn) in ("apk_sign.c", "throne_tracker.c", "allowlist.c"):
+                  s = s.replace("kernel_read(fp", "ksu_kernel_read49(fp")
+                  s = s.replace("kernel_write(fp", "ksu_kernel_write49(fp")
               open(fn, "w").write(s)
-          print("kernel_read/write compat applied to apk_sign.c, throne_tracker.c, allowlist.c")
+          print("compat header prepended to all kernelsu .c files; kernel_read/write rewrite applied")
           EOF
           echo "=== patched files summary ==="
           grep -l "ksu_compat_49" drivers/kernelsu/*.c drivers/kernelsu/*.h 2>/dev/null || true
