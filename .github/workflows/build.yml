@@ -285,7 +285,6 @@ jobs:
                         '#include "linux/version.h"\n#include "linux/cred.h"')
           hdecl = """
           bool is_task_ksu_domain(const struct cred* cred);
-
           bool is_init(const struct cred* cred);
 
           u32 ksu_get_ksu_file_sid();
@@ -308,6 +307,19 @@ jobs:
                             '#if __has_include("../kernel_compat.h")\n#include "../kernel_compat.h"\n#endif')
               open(p, "w").write(s)
               print("selinux/sepolicy.c: kernel_compat.h include guarded")
+
+          # 4j4. rules.c: on <5.10 (no KSU_COMPAT_USE_SELINUX_STATE) the
+          #      reset_avc_cache() first branch calls avc_ss_reset(0), whose
+          #      prototype lives in the kernel's own
+          #      security/selinux/include/avc_ss.h (resolved via the selinux
+          #      Makefile -I path). Include it explicitly.
+          p = sel_dir + "/rules.c"
+          s = open(p).read()
+          if '#include "ss/services.h"' in s and "#include \"avc_ss.h\"" not in s:
+              s = s.replace('#include "ss/services.h"',
+                            '#include "ss/services.h"\n\n#ifndef KSU_COMPAT_USE_SELINUX_STATE\n#include "avc_ss.h"\n#endif')
+              open(p, "w").write(s)
+              print("selinux/rules.c: avc_ss.h include added for <5.10")
 
           p = sel_dir + "/selinux.c"
           s = open(p).read()
