@@ -194,9 +194,22 @@ jobs:
                          "#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\nstatic int ksu_wrapper_iopoll(struct kiocb *kiocb, bool spin) {")
           s2 = s2.replace("\tp->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n",
                           "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\n\tp->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n#endif\n")
+          # 4e2. file_wrapper.c: mmap_supported_flags only exists on 4.17+
+          s2 = s2.replace("#else\n\tp->ops.mmap_supported_flags = fp->f_op->mmap_supported_flags;\n#endif\n",
+                          "#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)\n\tp->ops.mmap_supported_flags = fp->f_op->mmap_supported_flags;\n#endif\n")
+          # 4e3. file_wrapper.c: f_op->remap_file_range & REMAP_FILE_DEDUP need 4.20+
+          s2 = s2.replace("static loff_t ksu_wrapper_remap_file_range(struct file *file_in, loff_t pos_in,\n",
+                          "#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)\nstatic loff_t ksu_wrapper_remap_file_range(struct file *file_in, loff_t pos_in,\n")
+          s2 = s2.replace("\t\treturn orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);\n\t}\n}\n\nstatic int ksu_wrapper_fadvise(struct file *fp, loff_t off1, loff_t off2, int flags) {\n",
+                          "\t\treturn orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out, len, remap_flags);\n\t}\n}\n#endif\n\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)\nstatic int ksu_wrapper_fadvise(struct file *fp, loff_t off1, loff_t off2, int flags) {\n")
+          s2 = s2.replace("\tif (orig->f_op->fadvise) {\n\t\treturn orig->f_op->fadvise(orig, off1, off2, flags);\n\t}\n\treturn -EINVAL;\n}\n",
+                          "\tif (orig->f_op->fadvise) {\n\t\treturn orig->f_op->fadvise(orig, off1, off2, flags);\n\t}\n\treturn -EINVAL;\n}\n#endif\n")
+          # 4e4. file_wrapper.c: assignment lines for remap/fadvise guarded
+          s2 = s2.replace("\tp->ops.remap_file_range = fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;\n\tp->ops.fadvise = fp->f_op->fadvise ? ksu_wrapper_fadvise : NULL;\n",
+                          "#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)\n\tp->ops.remap_file_range = fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;\n#endif\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)\n\tp->ops.fadvise = fp->f_op->fadvise ? ksu_wrapper_fadvise : NULL;\n#endif\n")
           if s2 != s:
               open(p, "w").write(s2)
-              print("file_wrapper.c: iopoll guarded for kernels < 5.1")
+              print("file_wrapper.c: iopoll/mmap_supported_flags/remap_file_range/fadvise guarded for old kernels")
 
           # 4f. seccomp_cache.c: seccomp cache机制是 5.9+ 的, refcount_t/notify 在 4.9 不存在
           p = "drivers/kernelsu/seccomp_cache.c"
@@ -279,6 +292,9 @@ jobs:
           compat += "    int r = kernel_read(f, *pos, (char *)buf, count);\n    if (r > 0)\n        *pos += r;\n    return r;\n}\n"
           compat += "static inline ssize_t ksu_kernel_write49(struct file *f, const void *buf, size_t count, loff_t *pos)\n{\n"
           compat += "    ssize_t r = kernel_write(f, (const char *)buf, count, *pos);\n    if (r > 0)\n        *pos += r;\n    return r;\n}\n"
+          compat += "#endif\n"
+          compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 16, 0)\n"
+          compat += "#define __poll_t unsigned int\n"
           compat += "#endif\n"
           compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\n"
           compat += "#include <linux/uaccess.h>\n"
