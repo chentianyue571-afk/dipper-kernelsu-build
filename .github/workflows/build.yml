@@ -150,6 +150,23 @@ jobs:
           open(p, "w").write(stub + s + "\n#endif\n")
           print("pkg_observer.c: stubbed for kernels < 5.9")
 
+          # 4b. sched headers: linux/sched/signal.h & task.h split out in 4.11
+          p = "drivers/kernelsu/app_profile.c"
+          s = open(p).read()
+          s2 = s.replace("#include <linux/sched/signal.h>",
+                         "#if __has_include(<linux/sched/signal.h>)\n#include <linux/sched/signal.h>\n#else\n#include <linux/sched.h>\n#endif")
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("app_profile.c: sched/signal.h guarded for old kernels")
+
+          p = "drivers/kernelsu/seccomp_cache.c"
+          s = open(p).read()
+          s2 = s.replace("#include <linux/sched/task.h>",
+                         "#if __has_include(<linux/sched/task.h>)\n#include <linux/sched/task.h>\n#endif")
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("seccomp_cache.c: sched/task.h guarded for old kernels")
+
           # 5. kernel_read/kernel_write compat: 4.9 API is (file, offset, buf, count)
           compat = "#ifndef __KSU_COMPAT_49_H\n#define __KSU_COMPAT_49_H\n"
           compat += "#include <linux/version.h>\n#include <linux/fs.h>\n"
