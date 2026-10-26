@@ -210,12 +210,50 @@ jobs:
               open(p, "w").write(stub + s + "\n#endif\n")
               print("seccomp_cache.c: stubbed for kernels < 5.9")
 
-          # 4g. objsec.h: missing from the v3.0.0 tag but included by supercalls.c
-          import os
-          p = "drivers/kernelsu/objsec.h"
-          if not os.path.exists(p):
-              open(p, "w").write("#ifndef __KSU_OBJSEC_H\n#define __KSU_OBJSEC_H\n/* objsec.h is missing from the v3.0.0 tag; supercalls.c includes it. */\n#endif\n")
-              print("objsec.h: created (missing from v3.0.0 tag)")
+          # NOTE: do NOT create a stub objsec.h! supercalls.c includes "objsec.h"
+          # and the KSU Makefile -I paths resolve it to the kernel's own
+          # security/selinux/include/objsec.h. A local stub would shadow it.
+
+          # 4i. supercalls.c: anon_inode_getfd_secure needs 5.11+,
+          #     selinux_inode() helper also absent on 4.9 (no blob infra).
+          #     On <5.11 anon inodes share a singleton inode, so relabeling
+          #     it would poison every anon inode -> compile the whole
+          #     sid-relabel block out and use plain anon_inode_getfd.
+          p = "drivers/kernelsu/supercalls.c"
+          s = open(p).read()
+          old1 = ('#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\n'
+                  '#define getfd_secure anon_inode_create_getfd\n'
+                  '#else\n'
+                  '#define getfd_secure anon_inode_getfd_secure\n'
+                  '#endif\n'
+                  '    ret = getfd_secure("[ksu_fdwrapper]", &data->ops, data, f->f_flags, NULL);')
+          new1 = ('#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)\n'
+                  '    ret = anon_inode_create_getfd("[ksu_fdwrapper]", &data->ops, data, f->f_flags, NULL);\n'
+                  '#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)\n'
+                  '    ret = anon_inode_getfd_secure("[ksu_fdwrapper]", &data->ops, data, f->f_flags, NULL);\n'
+                  '#else\n'
+                  '    ret = anon_inode_getfd("[ksu_fdwrapper]", &data->ops, data, f->f_flags);\n'
+                  '#endif')
+          old2 = ('    struct inode_security_struct *sec = selinux_inode(wrapper_inode);\n'
+                  '    if (sec) {\n'
+                  '        sec->sid = ksu_file_sid;\n'
+                  '    }')
+          new2 = ('#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)\n'
+                  '    struct inode_security_struct *sec = selinux_inode(wrapper_inode);\n'
+                  '    if (sec) {\n'
+                  '        sec->sid = ksu_file_sid;\n'
+                  '    }\n'
+                  '#endif')
+          changed = False
+          if old1 in s:
+              s = s.replace(old1, new1)
+              changed = True
+          if old2 in s:
+              s = s.replace(old2, new2)
+              changed = True
+          if changed:
+              open(p, "w").write(s)
+              print("supercalls.c: fd-wrapper API guarded for kernels < 5.11")
 
           p = "drivers/kernelsu/seccomp_cache.c"
           s = open(p).read()
@@ -258,6 +296,7 @@ jobs:
           compat += "#endif\n#endif\n"
           open("drivers/kernelsu/ksu_compat_49.h", "w").write(compat)
           import glob
+          import os
           for fn in glob.glob("drivers/kernelsu/*.c"):
               s = open(fn).read()
               if "ksu_compat_49.h" not in s:
