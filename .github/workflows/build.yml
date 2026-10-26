@@ -96,7 +96,7 @@ jobs:
             Image.gz-dtb
           ls -la out/arch/arm64/boot/
 
-      - name: Fallback: append dtb manually if needed
+      - name: "Fallback: append dtb manually if needed"
         if: hashFiles('kernel/out/arch/arm64/boot/Image.gz-dtb') == ''
         run: |
           cd kernel/out/arch/arm64/boot
