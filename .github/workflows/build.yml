@@ -225,7 +225,15 @@ jobs:
               open(p, "w").write(s2)
               print("seccomp_cache.c: sched/task.h guarded for old kernels")
 
-          # 5. compat header: kernel_read/write (4.14), TWA_RESUME & strncpy_from_user_nofault (5.9), ksys_close (5.0)
+          # 4h. setuid_hook.c: force_sig takes (sig, task) two args before 5.2
+          p = "drivers/kernelsu/setuid_hook.c"
+          s = open(p).read()
+          s2 = s.replace("force_sig(SIGKILL);", "ksu_force_sig(SIGKILL);")
+          if s2 != s:
+              open(p, "w").write(s2)
+              print("setuid_hook.c: force_sig routed through ksu_force_sig wrapper")
+
+          # 5. compat header: kernel_read/write (4.14), TWA_RESUME & strncpy_from_user_nofault (5.9), ksys_close (5.0), force_sig (5.2)
           compat = "#ifndef __KSU_COMPAT_49_H\n#define __KSU_COMPAT_49_H\n"
           compat += "#include <linux/version.h>\n#include <linux/fs.h>\n"
           compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)\n"
@@ -242,6 +250,11 @@ jobs:
           compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)\n"
           compat += "#include <linux/syscalls.h>\n"
           compat += "#define ksys_close(fd) sys_close(fd)\n"
+          compat += "#endif\n"
+          compat += "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0)\n"
+          compat += "#define ksu_force_sig(sig) force_sig(sig, current)\n"
+          compat += "#else\n"
+          compat += "#define ksu_force_sig(sig) force_sig(sig)\n"
           compat += "#endif\n#endif\n"
           open("drivers/kernelsu/ksu_compat_49.h", "w").write(compat)
           import glob
