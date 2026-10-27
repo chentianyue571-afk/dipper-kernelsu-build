@@ -96,6 +96,13 @@ jobs:
             # gcc>=10 defaults to -fno-common; legacy dtc host build hits
             # "multiple definition of 'yylloc'" when linking dtc.
             sed -i 's/-fomit-frame-pointer -std=gnu89$/-fomit-frame-pointer -std=gnu89 -fcommon/' Makefile
+            # ld.lld cannot infer target emulation when a built-in.o -r
+            # link receives only EMPTY archives (dirs whose obj-y is just
+            # empty subdir built-ins, e.g. sound/drivers, drivers/clk/msm)
+            # -> "target emulation unknown: -m or at least one .o file
+            # required". Pin the emulation for all kbuild -r links.
+            sed -i 's/cmd_make_builtin = \$(LD) \$(ld_flags)/cmd_make_builtin = \$(LD) -m aarch64linux \$(ld_flags)/' scripts/Makefile.build
+            grep -n 'cmd_make_builtin' scripts/Makefile.build
             grep -E "CC_STACKPROTECTOR" arch/arm64/configs/${DEFCONFIG}
           fi
           echo "=== defconfig after patch ==="
@@ -291,7 +298,7 @@ jobs:
           # 4i. supercalls.c: anon_inode_getfd_secure needs 5.11+,
           #     selinux_inode() helper also absent on 4.9 (no blob infra).
           #     On <5.11 anon inodes share a singleton inode, so relabeling
-          #     it would poison every anon inode -> compile the whole
+n          #     it would poison every anon inode -> compile the whole
           #     sid-relabel block out and use plain anon_inode_getfd.
           p = "drivers/kernelsu/supercalls.c"
           s = open(p).read()
