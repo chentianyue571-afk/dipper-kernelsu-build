@@ -120,7 +120,8 @@ jobs:
           for t in elfedit as ld; do
             sudo ln -sf /usr/bin/aarch64-linux-gnu-$t /opt/cross/bin/aarch64-linux-gnu-$t
           done
-          # bare names: only as/ld (no gcc/ar/nm - those must stay host tools)
+          # bare names as/ld exist ONLY for clang's --prefix resolution;
+          # this dir must NOT go on PATH (host gcc would pick bare aarch64 as)
           sudo ln -sf /usr/bin/aarch64-linux-gnu-as /opt/cross/bin/as
           sudo ln -sf /usr/bin/aarch64-linux-gnu-ld /opt/cross/bin/ld
           ls -la /opt/cross/bin
@@ -209,7 +210,7 @@ jobs:
                   "#else\n")
           open(p, "w").write(stub + s + "\n#endif\n")
           print("pkg_observer.c: stubbed for kernels < 5.9")
-          
+
           # 4b. sched headers: linux/sched/signal.h & task.h split out in 4.11
           for fn in ["drivers/kernelsu/app_profile.c", "drivers/kernelsu/setuid_hook.c"]:
               s = open(fn).read()
@@ -580,12 +581,18 @@ jobs:
       - name: Build Image.gz-dtb
         run: |
           cd kernel
-          export PATH="$GITHUB_WORKSPACE/clang/bin:/opt/cross/bin:$PATH"
+          # NOTE: do NOT put /opt/cross/bin on PATH -- bare `as` there is the
+          # aarch64 assembler and HOSTCC (host gcc) would pick it up and die
+          # with "as: unrecognized option '--64'" (run26). The kernel Makefile
+          # computes clang --prefix as $(dir $(CROSS_COMPILE)elfedit); passing
+          # an ABSOLUTE CROSS_COMPILE pins the prefix to /opt/cross/bin
+          # without polluting host tool lookups.
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           export KBUILD_BUILD_USER=dipper
           export KBUILD_BUILD_HOST=kernelsu-build
           make -j$(nproc) O=out ARCH=arm64 \
             CC=clang LLVM=1 ${IAS_FLAG} \
-            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE=/opt/cross/bin/aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip \
             OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
@@ -633,4 +640,3 @@ jobs:
             --title "NGK dipper + KernelSU #${{ github.run_number }}" \
             --notes "Base: ${KERNEL_REPO} @ ${KERNEL_BRANCH} / KernelSU: tiann/KernelSU ${{ github.event.inputs.ksu_ref }} (old-arch, kprobes) / SUSFS disabled / supported.versions check disabled (any MIUI). Manager: use a KernelSU manager matching the kernel version, e.g. official releases on tiann/KernelSU." \
             "$ZIP"
-
