@@ -601,7 +601,7 @@ jobs:
             CC=clang LLVM=1 ${IAS_FLAG} \
             CROSS_COMPILE=/opt/cross/bin/aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LD=ld.lld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip \
+            LD=aarch64-linux-gnu-ld AR=llvm-ar NM=llvm-nm STRIP=llvm-strip \
             OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
             Image.gz-dtb
           ls -la out/arch/arm64/boot/
