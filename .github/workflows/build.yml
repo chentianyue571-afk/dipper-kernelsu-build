@@ -298,7 +298,7 @@ jobs:
           # 4i. supercalls.c: anon_inode_getfd_secure needs 5.11+,
           #     selinux_inode() helper also absent on 4.9 (no blob infra).
           #     On <5.11 anon inodes share a singleton inode, so relabeling
-n          #     it would poison every anon inode -> compile the whole
+          #     it would poison every anon inode -> compile the whole
           #     sid-relabel block out and use plain anon_inode_getfd.
           p = "drivers/kernelsu/supercalls.c"
           s = open(p).read()
@@ -647,3 +647,4 @@ n          #     it would poison every anon inode -> compile the whole
             --title "NGK dipper + KernelSU #${{ github.run_number }}" \
             --notes "Base: ${KERNEL_REPO} @ ${KERNEL_BRANCH} / KernelSU: tiann/KernelSU ${{ github.event.inputs.ksu_ref }} (old-arch, kprobes) / SUSFS disabled / supported.versions check disabled (any MIUI). Manager: use a KernelSU manager matching the kernel version, e.g. official releases on tiann/KernelSU." \
             "$ZIP"
+
