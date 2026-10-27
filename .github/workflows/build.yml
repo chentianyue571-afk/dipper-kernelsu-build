@@ -81,9 +81,19 @@ jobs:
             echo "CONFIG_LOCALVERSION=\"${LOCALVERSION}\""
           } >> arch/arm64/configs/${DEFCONFIG}
           if [ "${{ github.event.inputs.kernel_source }}" = "micode" ]; then
-            # prepare-compiler-check only fires when SSP =y; disable to skip it
-            echo "# CONFIG_CC_STACKPROTECTOR is not set" >> arch/arm64/configs/${DEFCONFIG}
-            echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set" >> arch/arm64/configs/${DEFCONFIG}
+            # 4.16-style Kconfig CHOICE (NONE/REGULAR/STRONG): appended
+            # "# ... is not set" lines do not stick for choice members.
+            # Rewrite the selection in place instead.
+            sed -i 's/^CONFIG_CC_STACKPROTECTOR_STRONG=y$/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/' arch/arm64/configs/${DEFCONFIG}
+            echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> arch/arm64/configs/${DEFCONFIG}
+            # vanilla Kbuild.include probes with -Werror over the full
+            # KBUILD_CFLAGS; 2019-era flags make modern clang warn, turning
+            # EVERY cc-option probe (incl. stack-protector check) into a
+            # failure. Drop -Werror from the probe only.
+            # Drop -Werror from the probe line (line 115 = __cc-option body).
+            sed -i '115s/-Werror//' scripts/Kbuild.include
+            sed -n '114,115p' scripts/Kbuild.include
+            grep -E "CC_STACKPROTECTOR" arch/arm64/configs/${DEFCONFIG}
           fi
           echo "=== defconfig after patch ==="
           grep -E "CONFIG_KPROBES=|CONFIG_KSU=|CONFIG_LOCALVERSION=" arch/arm64/configs/${DEFCONFIG}
@@ -528,6 +538,7 @@ jobs:
           EOF
           echo "=== patched files summary ==="
           grep -l "ksu_compat_49" drivers/kernelsu/*.c drivers/kernelsu/*.h 2>/dev/null || true
+
       - name: Make defconfig
         run: |
           cd kernel
