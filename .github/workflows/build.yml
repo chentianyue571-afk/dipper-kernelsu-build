@@ -95,7 +95,7 @@ jobs:
             sed -n '114,115p' scripts/Kbuild.include
             # gcc>=10 defaults to -fno-common; legacy dtc host build hits
             # "multiple definition of 'yylloc'" when linking dtc.
-            sed -i 's/-fomit-frame-pointer -std=gnu89$/-fomit-frame-pointer -std=gnu89 -fcommon/' Makefile
+            sed -i 's/-fomit-frame-pointer -std=gnu89$/-fomit-frame-pointer -std=gnu89 -fcommon/' Makefile && sed -i '919s/-Werror=implicit-int/-Wno-implicit-int/;922s/-Werror=strict-prototypes/-Wno-strict-prototypes/;928s/-Werror=incompatible-pointer-types/-Wno-incompatible-pointer-types/' Makefile
             # ld.lld cannot infer target emulation when a built-in.o -r
             # link receives only EMPTY archives (dirs whose obj-y is just
             # empty subdir built-ins, e.g. sound/drivers, drivers/clk/msm)
