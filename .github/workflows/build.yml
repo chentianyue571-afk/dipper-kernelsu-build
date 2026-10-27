@@ -93,6 +93,9 @@ jobs:
             # Drop -Werror from the probe line (line 115 = __cc-option body).
             sed -i '115s/-Werror//' scripts/Kbuild.include
             sed -n '114,115p' scripts/Kbuild.include
+            # gcc>=10 defaults to -fno-common; legacy dtc host build hits
+            # "multiple definition of 'yylloc'" when linking dtc.
+            sed -i 's/-fomit-frame-pointer -std=gnu89$/-fomit-frame-pointer -std=gnu89 -fcommon/' Makefile
             grep -E "CC_STACKPROTECTOR" arch/arm64/configs/${DEFCONFIG}
           fi
           echo "=== defconfig after patch ==="
@@ -104,6 +107,23 @@ jobs:
           sudo apt-get install -y \
             bc bison flex libssl-dev python3 lld zip \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: Stage cross bin dir (old msm kbuild clang --prefix fix)
+        run: |
+          # msm-4.9 Makefile passes clang --prefix=<dir of $(CROSS_COMPILE)elfedit>
+          # and resolves the EXTERNAL assembler as <dir>/as (-no-integrated-as).
+          # On Ubuntu that dir is /usr/bin -> host x86 as ->
+          # "as: unrecognized option '-EL'". Stage a dir where bare as/ld ARE
+          # the aarch64 binutils and make `which aarch64-linux-gnu-elfedit`
+          # resolve there, so --prefix points at aarch64 tools.
+          sudo mkdir -p /opt/cross/bin
+          for t in elfedit as ld; do
+            sudo ln -sf /usr/bin/aarch64-linux-gnu-$t /opt/cross/bin/aarch64-linux-gnu-$t
+          done
+          # bare names: only as/ld (no gcc/ar/nm - those must stay host tools)
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-as /opt/cross/bin/as
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-ld /opt/cross/bin/ld
+          ls -la /opt/cross/bin
 
       - name: Cache clang toolchain
         id: clang
@@ -189,7 +209,7 @@ jobs:
                   "#else\n")
           open(p, "w").write(stub + s + "\n#endif\n")
           print("pkg_observer.c: stubbed for kernels < 5.9")
-
+          
           # 4b. sched headers: linux/sched/signal.h & task.h split out in 4.11
           for fn in ["drivers/kernelsu/app_profile.c", "drivers/kernelsu/setuid_hook.c"]:
               s = open(fn).read()
@@ -560,7 +580,7 @@ jobs:
       - name: Build Image.gz-dtb
         run: |
           cd kernel
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export PATH="$GITHUB_WORKSPACE/clang/bin:/opt/cross/bin:$PATH"
           export KBUILD_BUILD_USER=dipper
           export KBUILD_BUILD_HOST=kernelsu-build
           make -j$(nproc) O=out ARCH=arm64 \
@@ -613,3 +633,4 @@ jobs:
             --title "NGK dipper + KernelSU #${{ github.run_number }}" \
             --notes "Base: ${KERNEL_REPO} @ ${KERNEL_BRANCH} / KernelSU: tiann/KernelSU ${{ github.event.inputs.ksu_ref }} (old-arch, kprobes) / SUSFS disabled / supported.versions check disabled (any MIUI). Manager: use a KernelSU manager matching the kernel version, e.g. official releases on tiann/KernelSU." \
             "$ZIP"
+
